@@ -1,0 +1,73 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Description: Deploy Managed Kubernetes Resources - Worker Nodes
+
+Parameters:
+  AppName:
+    Type: String
+    Description: EKS Application name
+  EksClusterName:
+    Type: AWS::SSM::Parameter::Value<String>
+    Description: Name of the EKS cluster stored in Systems Manager Parameter Store
+  InstanceTypes:
+    Type: CommaDelimitedList
+    Description: Eks node group instance types
+  CapacityType:
+    Type: String
+    Description: Eks node group capacity type
+    AllowedValues:
+      - SPOT
+      - ON_DEMAND
+  MinimumInstances:
+    Type: String
+    Description: Minimum number of instances in the Eks Node group
+  DesiredInstances:
+    Type: String
+    Description: Desired number of instances in the Eks Node group
+  MaximumInstances:
+    Type: String
+    Description: Maximum number of instances in the Eks Node group
+
+Resources:
+  EksNodeGroupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        # https://docs.aws.amazon.com/eks/latest/userguide/create-node-role.html
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+        # Cloudwatch agent policy
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+        # To use session manager to connect to private EC2 instances via AWS Console
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  EksClusterNodeGroupFleet:
+    Type: AWS::EKS::Nodegroup
+    Properties:
+      ClusterName: !Ref EksClusterName
+      NodeRole: !GetAtt EksNodeGroupRole.Arn
+      InstanceTypes: !Ref InstanceTypes
+      CapacityType: !Ref CapacityType
+      ScalingConfig:
+        MinSize: !Ref MinimumInstances
+        DesiredSize: !Ref DesiredInstances
+        MaxSize: !Ref MaximumInstances
+      Labels:
+        eks-kube-node-group: True
+        app: demo-app
+      Subnets:
+        - Fn::ImportValue: !Sub ${AppName}-vpc-private-subnet-a-id
+        - Fn::ImportValue: !Sub ${AppName}-vpc-private-subnet-b-id
+        - Fn::ImportValue: !Sub ${AppName}-vpc-private-subnet-c-id
+      Tags:
+        { "app": "demo-app", "purpose": "learning", "eks_role": "node_group" }

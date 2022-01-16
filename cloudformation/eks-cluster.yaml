@@ -1,0 +1,138 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Description: Deploy Managed Kubernetes Resources - Cluster utilizing Public + Private Subnets
+
+Parameters:
+  HomeNetworkCidr:
+    Type: String
+    Description: Home network CIDR to restrict access to Kube API Server
+  EksClusterNameSsmPath:
+    Type: String
+    Description: SSM path to store EKS cluster name to
+  EksVersion:
+    Type: String
+    Description: Version of Managed EKS Cluster to deploy
+  ServiceCidr:
+    Type: String
+    Description: Kuberentes Service CIDR Range
+  AppName:
+    Type: String
+    Description: EKS Application name
+  OidcProviderUrlSsmPath:
+    Type: String
+    Description: EKS Cluster's OIDC provider url ssm path
+  AppNamespace:
+    Type: String
+    Description: Kubernetes Application Namespace
+  AppNamespaceSsmPath:
+    Type: String
+    Description: Kubernetes Application Namespace Ssm path
+
+Resources:
+  KubeFleetSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group which used by the Eks Cluster
+      VpcId:
+        Fn::ImportValue: !Sub ${AppName}-vpc-id
+      Tags:
+        - Key: "in_use_by"
+          Value: "eks"
+        - Key: "app"
+          Value: !Ref AppName
+
+  KubeFleetSecurityGroupEgressRule:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref KubeFleetSecurityGroup
+      IpProtocol: "-1"
+      CidrIp: 0.0.0.0/0
+      Description: Allow all outbound
+
+  EksCluster:
+    Type: AWS::EKS::Cluster
+    Properties:
+      RoleArn: !GetAtt EksClusterRole.Arn
+      KubernetesNetworkConfig:
+        ServiceIpv4Cidr: !Ref ServiceCidr
+      ResourcesVpcConfig:
+        SecurityGroupIds:
+          - !Ref KubeFleetSecurityGroup
+        SubnetIds:
+          - Fn::ImportValue: !Sub ${AppName}-vpc-public-subnet-a-id
+          - Fn::ImportValue: !Sub ${AppName}-vpc-public-subnet-b-id
+          - Fn::ImportValue: !Sub ${AppName}-vpc-public-subnet-c-id
+          - Fn::ImportValue: !Sub ${AppName}-vpc-private-subnet-a-id
+          - Fn::ImportValue: !Sub ${AppName}-vpc-private-subnet-b-id
+          - Fn::ImportValue: !Sub ${AppName}-vpc-private-subnet-c-id
+        EndpointPublicAccess: true ## So you can connect to the API server - https://docs.aws.amazon.com/eks/latest/userguide/cluster-endpoint.html
+        EndpointPrivateAccess: true
+        PublicAccessCidrs: [!Ref HomeNetworkCidr]
+      Version: !Ref EksVersion
+      Logging:
+        ClusterLogging:
+          EnabledTypes:
+            - Type: api
+            - Type: audit
+            - Type: authenticator
+            - Type: controllerManager
+            - Type: scheduler
+
+  EksClusterNameSsmParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: Name of EKS Cluster to store in SSM
+      Name: !Ref EksClusterNameSsmPath
+      Type: String
+      Value: !Ref EksCluster
+
+  EksClusterOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      ClientIdList:
+        - sts.amazonaws.com
+      Tags:
+        - Key: Cluster
+          Value: !Ref EksCluster
+      ThumbprintList: # https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_providers_create_oidc_verify-thumbprint.html
+        - 9e99a48a9960b14926bb7f3b02e22da2b0ab7280
+      Url: !GetAtt EksCluster.OpenIdConnectIssuerUrl
+
+  EksClusterOidcProviderSsmParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: Eks cluster Oidc Provider Url
+      Name: !Ref OidcProviderUrlSsmPath
+      Type: String
+      Value:
+        !Select [1, !Split ["//", !GetAtt EksCluster.OpenIdConnectIssuerUrl]]
+
+  EksClusterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - eks.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+
+  ApplicationNamespaceSsmParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: App namespace parameter
+      Name: !Ref AppNamespaceSsmPath
+      Type: String
+      Value: !Ref AppNamespace
+
+Outputs:
+  EksClusterName:
+    Description: Name of managed EKS cluster.
+    Value: !Ref EksCluster
+    Export:
+      Name: !Sub ${AppName}-cluster-name

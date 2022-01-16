@@ -1,0 +1,295 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Description: 3 tier VPC for EKS Resources - 3 public and 3 private subnets, 1 NAT Gateway, custom VPC flow logs
+
+Parameters:
+  AppName:
+    Description: EKS Application name
+    Type: String
+  VpcNetwork:
+    Description: VPC Network Range
+    Type: String
+  SubnetCidrs:
+    Description: Comma-separated list of four CIDRs for the VPC's subnets
+    Type: CommaDelimitedList
+  FlowLogRetentionPeriod:
+    Description: Flow log retention in days
+    Type: Number
+    Default: 30
+
+Resources:
+  VpcSsmParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: References the VPC ID
+      Type: String
+      Name: !Sub /${AppName}/eks/vpc/id
+      Value: !Ref Vpc
+
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcNetwork
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${AppName}-vpc
+
+  VpcNonceDefaultEgressRule:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !GetAtt Vpc.DefaultSecurityGroup
+      IpProtocol: "-1"
+      CidrIp: 127.0.0.1/32
+      Description: CIS 4.4 - Overwrite default SG rules with a rule that effectively removes access
+
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      MapPublicIpOnLaunch: true
+      CidrBlock: !Select [0, !Ref SubnetCidrs]
+      AvailabilityZone: !Sub ${AWS::Region}a
+      Tags:
+        - Key: Name
+          Value: !Sub ${AppName}-public-subnet-a
+        - Key: kubernetes.io/role/elb
+          Value: "1"
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      MapPublicIpOnLaunch: true
+      CidrBlock: !Select [1, !Ref SubnetCidrs]
+      AvailabilityZone: !Sub ${AWS::Region}b
+      Tags:
+        - Key: Name
+          Value: !Sub ${AppName}-public-subnet-b
+        - Key: kubernetes.io/role/elb
+          Value: "1"
+
+  PublicSubnetC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      MapPublicIpOnLaunch: true
+      CidrBlock: !Select [2, !Ref SubnetCidrs]
+      AvailabilityZone: !Sub ${AWS::Region}c
+      Tags:
+        - Key: Name
+          Value: !Sub ${AppName}-public-subnet-c
+        - Key: kubernetes.io/role/elb
+          Value: "1"
+
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Select [3, !Ref SubnetCidrs]
+      AvailabilityZone: !Sub ${AWS::Region}a
+      Tags:
+        - Key: Name
+          Value: !Sub ${AppName}-private-subnet-a
+        - Key: kubernetes.io/role/internal-elb
+          Value: "1"
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Select [4, !Ref SubnetCidrs]
+      AvailabilityZone: !Sub ${AWS::Region}b
+      Tags:
+        - Key: Name
+          Value: !Sub ${AppName}-private-subnet-b
+        - Key: kubernetes.io/role/internal-elb
+          Value: "1"
+
+  PrivateSubnetC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Select [5, !Ref SubnetCidrs]
+      AvailabilityZone: !Sub ${AWS::Region}c
+      Tags:
+        - Key: Name
+          Value: !Sub ${AppName}-private-subnet-c
+        - Key: kubernetes.io/role/internal-elb
+          Value: "1"
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${AppName}-vpc-public-rt
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${AppName}-vpc-private-rt
+
+  PublicSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetA
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetB
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetCRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetC
+      RouteTableId: !Ref PublicRouteTable
+
+  PrivateSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetA
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetB
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetCRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetC
+      RouteTableId: !Ref PrivateRouteTable
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${AppName}-vpc-igw
+
+  VpcGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref Vpc
+
+  PublicRouteToInternet:
+    Type: AWS::EC2::Route
+    DependsOn:
+      - VpcGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  AllocateElasticIp:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    DependsOn:
+      - VpcGatewayAttachment
+    Properties:
+      AllocationId: !GetAtt AllocateElasticIp.AllocationId
+      SubnetId: !Ref PublicSubnetA
+
+  PrivateRouteToNatGatewayInPublicSubnet:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  VpcFlowLogRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - vpc-flow-logs.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub ${AppName}-vpc-flowlogs-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${AWS::StackName}*
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                Resource:
+                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:*
+
+  VpcFlowLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: !Ref FlowLogRetentionPeriod
+
+  VpcFlowLog:
+    Type: AWS::EC2::FlowLog
+    Properties:
+      DeliverLogsPermissionArn: !GetAtt VpcFlowLogRole.Arn
+      LogGroupName: !Ref VpcFlowLogGroup
+      ResourceId: !Ref Vpc
+      ResourceType: VPC
+      LogFormat: ${account-id} ${interface-id} ${srcaddr} ${dstaddr} ${srcport} ${dstport} ${protocol} ${packets} ${bytes} ${start} ${end} ${action} ${log-status} ${vpc-id} ${az-id} ${subnet-id} ${instance-id} ${tcp-flags} ${type} ${pkt-src-aws-service} ${pkt-srcaddr} ${pkt-dst-aws-service} ${pkt-dstaddr} ${flow-direction} ${traffic-path}
+      TrafficType: ALL
+
+Outputs:
+  VpcId:
+    Value: !Ref Vpc
+    Export:
+      Name: !Sub ${AppName}-vpc-id
+
+  PublicSubnetAId:
+    Value: !Ref PublicSubnetA
+    Export:
+      Name: !Sub ${AppName}-vpc-public-subnet-a-id
+
+  PublicSubnetBId:
+    Value: !Ref PublicSubnetB
+    Export:
+      Name: !Sub ${AppName}-vpc-public-subnet-b-id
+
+  PublicSubnetCId:
+    Value: !Ref PublicSubnetC
+    Export:
+      Name: !Sub ${AppName}-vpc-public-subnet-c-id
+
+  PrivateSubnetAId:
+    Value: !Ref PrivateSubnetA
+    Export:
+      Name: !Sub ${AppName}-vpc-private-subnet-a-id
+
+  PrivateSubnetBId:
+    Value: !Ref PrivateSubnetB
+    Export:
+      Name: !Sub ${AppName}-vpc-private-subnet-b-id
+
+  PrivateSubnetCId:
+    Value: !Ref PrivateSubnetC
+    Export:
+      Name: !Sub ${AppName}-vpc-private-subnet-c-id

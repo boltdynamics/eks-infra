@@ -1,0 +1,24 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Description: Deploy EKS Addons - VPC CNI
+
+Parameters:
+  EksClusterName:
+    Type: AWS::SSM::Parameter::Value<String>
+    Description: Name of the Eks cluster stored in Systems Manager Parameter Store
+  VpcCniAddonVersion:
+    Type: String
+    Description: Vpc cni addon version
+    Default: v1.10.1-eksbuild.1
+
+Resources:
+  VpcCni:
+    Type: AWS::EKS::Addon
+    Properties:
+      AddonName: vpc-cni
+      AddonVersion: !Ref VpcCniAddonVersion
+      ClusterName: !Ref EksClusterName
+      ResolveConflicts: OVERWRITE
+      Tags:
+        - Key: eks_addon
+          Value: True
