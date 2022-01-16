@@ -36,7 +36,7 @@ The file `defaults.conf` located under `settings` directory contains configurabl
     * Required: `true`
 
 * SUBNET_CIDRS - Subnet CIDR ranges to be used
-    * Default: `10.0.0.0/18,10.0.64.0/18,10.0.128.0/18,10.0.192.0/18`
+    * Default: `10.0.0.0/19,10.0.32.0/19,10.0.64.0/19,10.0.96.0/19,10.0.128.0/19,10.0.160.0/19`
     * Required: `true`
 
 * SERVICE_CIDR - Kubernetes services will leverage this CIDR range
